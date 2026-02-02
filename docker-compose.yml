@@ -1,9 +1,8 @@
-version: '3.8'
-
 services:
   db:
-    image: postgres:15
+    image: postgres:15-alpine
     container_name: task_db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
@@ -12,28 +11,58 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d taskdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - task-network
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: task_backend
+    restart: unless-stopped
     environment:
-      DB_USER: user
-      DB_PASSWORD: password
-      DB_HOST: db
-      DB_NAME: taskdb
-      JWT_SECRET: secret
+      DATABASE_URL: "postgresql://user:password@db:5432/taskdb"
+      JWT_SECRET: "your-super-secret-jwt-key-change-in-production"
+      PORT: 3000
+      NODE_ENV: production
+      FRONTEND_URL: "http://localhost:4200"
     ports:
       - "3000:3000"
+    command: >
+      sh -c "npm run prisma:migrate && npm start"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    networks:
+      - task-network
+    volumes:
+      - ./backend/prisma:/app/prisma
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: task_frontend
+    restart: unless-stopped
     ports:
       - "4200:80"
     depends_on:
       - backend
+    networks:
+      - task-network
+    environment:
+      - API_URL=http://backend:3000/api/v1
+      - SOCKET_URL=http://backend:3000
 
 volumes:
   db_data:
+    driver: local
+
+networks:
+  task-network:
+    driver: bridge
